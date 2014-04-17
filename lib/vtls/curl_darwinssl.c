@@ -1296,9 +1296,11 @@ static CURLcode darwinssl_connect_step1(struct connectdata *conn,
 #else
   if(SSLSetSessionOption != NULL) {
 #endif /* CURL_BUILD_MAC */
+    bool break_on_auth = !data->set.ssl.verifypeer ||
+      data->set.str[STRING_SSL_CAFILE];
     err = SSLSetSessionOption(connssl->ssl_ctx,
                               kSSLSessionOptionBreakOnServerAuth,
-                              data->set.ssl.verifypeer?false:true);
+                              break_on_auth);
     if(err != noErr) {
       failf(data, "SSL: SSLSetSessionOption() failed: OSStatus %d", err);
       return CURLE_SSL_CONNECT_ERROR;
@@ -1322,6 +1324,20 @@ static CURLcode darwinssl_connect_step1(struct connectdata *conn,
     return CURLE_SSL_CONNECT_ERROR;
   }
 #endif /* CURL_BUILD_MAC_10_6 || CURL_BUILD_IOS */
+
+  if(data->set.str[STRING_SSL_CAFILE]) {
+    bool is_cert_file = is_file(data->set.str[STRING_SSL_CAFILE]);
+    if (!is_cert_file) {
+      failf(data, "SSL: can't load CA certificate file %s",
+            data->set.str[STRING_SSL_CAFILE]);
+      return CURLE_SSL_CACERT;
+    }
+    if (!data->set.ssl.verifypeer) {
+      failf(data, "SSL: CA certificate set, but certificate verification "
+            "is disabled");
+      return CURLE_SSL_CONNECT_ERROR;
+    }
+  }
 
   /* Configure hostname check. SNI is used if available.
    * Both hostname check and SNI require SSLSetPeerDomainName().
@@ -1503,6 +1519,121 @@ static CURLcode darwinssl_connect_step1(struct connectdata *conn,
   return CURLE_OK;
 }
 
+static CFDataRef createDataFromURL(CFURLRef url)
+{
+  CFMutableDataRef data = CFDataCreateMutable(kCFAllocatorDefault, 0);
+  if (!data)
+    return NULL;
+
+  CFReadStreamRef st = CFReadStreamCreateWithFile(kCFAllocatorDefault, url);
+  if (!st) {
+    CFRelease(data);
+  }
+
+  if (!CFReadStreamOpen(st)) {
+    CFRelease(data);
+    CFRelease(st);
+    return NULL;
+  }
+
+  CFIndex n;
+  do {
+    unsigned char buf[512];
+    n = CFReadStreamRead(st, buf, sizeof(buf));
+    if (n > 0) {
+      CFDataAppendBytes(data, buf, n);
+    } else if (n < 0) {
+      CFRelease(data);
+      CFRelease(st);
+      return NULL;
+    }
+  } while (n > 0);
+
+  CFReadStreamClose(st);
+
+  CFRelease(st);
+
+  return data;
+}
+
+static int verify_cert(const char *cafile, struct SessionHandle *data,
+                       SSLContextRef ctx)
+{
+  CFStringRef path = CFStringCreateWithCString(NULL, cafile,
+                                               kCFStringEncodingUTF8);
+  if (!path) {
+    failf(data, "SSL: failed to load CA certificate");
+    return -1;
+  }
+
+  CFURLRef url = CFURLCreateWithFileSystemPath(NULL, path,
+                                               kCFURLPOSIXPathStyle, false);
+  CFRelease(path);
+  if (!url) {
+    failf(data, "SSL: failed to load CA certificate");
+    return -1;
+  }
+
+  CFDataRef certdata = createDataFromURL(url);
+  CFRelease(url);
+  if (!certdata) {
+    failf(data, "SSL: failed to load CA certificate");
+    return -1;
+  }
+
+  SecCertificateRef cacert = SecCertificateCreateWithData(NULL, certdata);
+  CFRelease(certdata);
+  if (!cacert) {
+    failf(data, "SSL: invalid CA certificate - the Security Framework "
+          "only accepts CA certificates in DER format");
+    return -1;
+  }
+
+  SecTrustRef trust;
+  OSStatus ret = SSLCopyPeerTrust(ctx, &trust);
+  if (ret != noErr || trust == NULL) {
+    failf(data, "SSL: error getting certificate chain");
+    return -1;
+  }
+
+  CFMutableArrayRef array = CFArrayCreateMutable(NULL, 0,
+                                                 &kCFTypeArrayCallBacks);
+  CFArrayAppendValue(array, cacert);
+  CFRelease(cacert);
+
+  ret = SecTrustSetAnchorCertificates(trust, array);
+  if (ret != noErr) {
+    failf(data, "SSL: error setting CA certificate as trusted");
+    CFRelease(trust);
+    return -1;
+  }
+
+  SecTrustResultType trust_eval = 0;
+  ret = SecTrustEvaluate(trust, &trust_eval);
+  ret = SecTrustEvaluate(trust, &trust_eval);
+  CFRelease(array);
+  CFRelease(trust);
+  if (ret != noErr) {
+    failf(data, "SSL: SecTrustEvaluate() failed");
+    return -1;
+  }
+
+  switch (trust_eval) {
+    case kSecTrustResultUnspecified:
+    case kSecTrustResultProceed:
+      infof(data, "SSL: certificate verification succeeded (result: %d)",
+            trust_eval);
+      return 0;
+
+    case kSecTrustResultRecoverableTrustFailure:
+    case kSecTrustResultDeny:
+    default:
+      failf(data, "SSL: certificate verification failed (result: %d)",
+            trust_eval);
+      return 1;
+  }
+}
+
 static CURLcode
 darwinssl_connect_step2(struct connectdata *conn, int sockindex)
 {
@@ -1529,6 +1660,10 @@ darwinssl_connect_step2(struct connectdata *conn, int sockindex)
       /* The below is errSSLServerAuthCompleted; it's not defined in
         Leopard's headers */
       case -9841:
+        if(data->set.str[STRING_SSL_CAFILE] &&
+           verify_cert(data->set.str[STRING_SSL_CAFILE], data,
+                       connssl->ssl_ctx) != 0)
+          return CURLE_SSL_CACERT;
         /* the documentation says we need to call SSLHandshake() again */
         return darwinssl_connect_step2(conn, sockindex);
 
