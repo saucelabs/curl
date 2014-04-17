@@ -28,6 +28,9 @@
 
 #include "curl_setup.h"
 
+#include "urldata.h" /* for the SessionHandle definition */
+#include "curl_base64.h"
+
 #ifdef USE_DARWINSSL
 
 #ifdef HAVE_LIMITS_H
@@ -1519,73 +1522,126 @@ static CURLcode darwinssl_connect_step1(struct connectdata *conn,
   return CURLE_OK;
 }
 
-static CFDataRef createDataFromURL(CFURLRef url)
+static int pem_to_der(const char *in, unsigned char **out, size_t *outlen)
 {
-  CFMutableDataRef data = CFDataCreateMutable(kCFAllocatorDefault, 0);
-  if (!data)
-    return NULL;
+  char *sep, *start, *end;
+  int i, j, err;
+  size_t len;
+  unsigned char *b64;
 
-  CFReadStreamRef st = CFReadStreamCreateWithFile(kCFAllocatorDefault, url);
-  if (!st) {
-    CFRelease(data);
+  /* Jump through the separators in the first line. */
+  sep = strstr(in, "-----");
+  if (sep == NULL)
+    return -1;
+  sep = strstr(sep + 1, "-----");
+  if (sep == NULL)
+    return -1;
+
+  start = sep + 5;
+
+  /* Find beginning of last line separator. */
+  end = strstr(start, "-----");
+  if (end == NULL)
+    return -1;
+
+  len = end - start;
+  *out = malloc(len);
+  if (!*out)
+    return -1;
+
+  b64 = malloc(len + 1);
+  if (!b64) {
+    free(*out);
+    return -1;
   }
 
-  if (!CFReadStreamOpen(st)) {
-    CFRelease(data);
-    CFRelease(st);
-    return NULL;
+  /* Create base64 string without linefeeds. */
+  for (i = 0, j = 0; i < len; i++) {
+    if (start[i] != '\r' && start[i] != '\n')
+      b64[j++] = start[i];
+  }
+  b64[j] = '\0';
+
+  err = (int)Curl_base64_decode((const char *)b64, out, outlen);
+  free(b64);
+  if (err) {
+    free(*out);
+    return -1;
   }
 
-  CFIndex n;
-  do {
-    unsigned char buf[512];
-    n = CFReadStreamRead(st, buf, sizeof(buf));
-    if (n > 0) {
-      CFDataAppendBytes(data, buf, n);
-    } else if (n < 0) {
-      CFRelease(data);
-      CFRelease(st);
-      return NULL;
+  return 0;
+}
+
+static int read_cert(const char *file, SecCertificateRef *cacert)
+{
+  int fd, ret, n, len = 0, cap = 512;
+  size_t derlen;
+  unsigned char buf[cap], *data, *der;
+
+  fd = open(file, 0);
+  if (fd < 0)
+    return -1;
+
+  data = malloc(cap);
+  if (!data) {
+    close(fd);
+    return -1;
+  }
+
+  for (;;) {
+    n = read(fd, buf, sizeof(buf));
+    if (n < 0) {
+      close(fd);
+      free(data);
+      return -1;
+    } else if (n == 0) {
+      close(fd);
+      break;
     }
-  } while (n > 0);
 
-  CFReadStreamClose(st);
+    if (len + n >= cap) {
+      cap *= 2;
+      data = realloc(data, cap);
+      if (!data) {
+        close(fd);
+        return -1;
+      }
+    }
 
-  CFRelease(st);
+    memcpy(data + len, buf, n);
+    len += n;
+  }
+  data[len] = '\0';
 
-  return data;
+  /*
+   * Check if the certificate is in PEM format, and convert it to DER. If this
+   * fails, we assume the certificate is in DER format.
+   */
+  if (pem_to_der((const char *)data, &der, &derlen) == 0) {
+    free(data);
+    data = der;
+    len = derlen;
+  }
+
+  CFDataRef certdata = CFDataCreate(kCFAllocatorDefault, data, len);
+  free(data);
+  if (!certdata)
+    return -1;
+
+  *cacert = SecCertificateCreateWithData(NULL, certdata);
+  CFRelease(certdata);
+  if (!*cacert)
+    return -1;
+
+  return 0;
 }
 
 static int verify_cert(const char *cafile, struct SessionHandle *data,
                        SSLContextRef ctx)
 {
-  CFStringRef path = CFStringCreateWithCString(NULL, cafile,
-                                               kCFStringEncodingUTF8);
-  if (!path) {
-    failf(data, "SSL: failed to load CA certificate");
-    return -1;
-  }
-
-  CFURLRef url = CFURLCreateWithFileSystemPath(NULL, path,
-                                               kCFURLPOSIXPathStyle, false);
-  CFRelease(path);
-  if (!url) {
-    failf(data, "SSL: failed to load CA certificate");
-    return -1;
-  }
-
-  CFDataRef certdata = createDataFromURL(url);
-  CFRelease(url);
-  if (!certdata) {
-    failf(data, "SSL: failed to load CA certificate");
-    return -1;
-  }
-
-  SecCertificateRef cacert = SecCertificateCreateWithData(NULL, certdata);
-  CFRelease(certdata);
-  if (!cacert) {
-    failf(data, "SSL: invalid CA certificate - the Security Framework "
-          "only accepts CA certificates in DER format");
+  SecCertificateRef cacert;
+  if (read_cert(cafile, &cacert) < 0) {
+    failf(data, "SSL: failed to read or invalid CA certificate");
     return -1;
   }
 
