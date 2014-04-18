@@ -1333,7 +1333,7 @@ static CURLcode darwinssl_connect_step1(struct connectdata *conn,
     if (!is_cert_file) {
       failf(data, "SSL: can't load CA certificate file %s",
             data->set.str[STRING_SSL_CAFILE]);
-      return CURLE_SSL_CACERT;
+      return CURLE_SSL_CACERT_BADFILE;
     }
     if (!data->set.ssl.verifypeer) {
       failf(data, "SSL: CA certificate set, but certificate verification "
