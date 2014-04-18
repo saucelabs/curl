@@ -1572,7 +1572,7 @@ static int pem_to_der(const char *in, unsigned char **out, size_t *outlen)
   return 0;
 }
 
-static int read_cert(const char *file, SecCertificateRef *cacert)
+static int read_cert(const char *file, unsigned char **out, size_t *outlen)
 {
   int fd, ret, n, len = 0, cap = 512;
   size_t derlen;
@@ -1623,15 +1623,8 @@ static int read_cert(const char *file, SecCertificateRef *cacert)
     len = derlen;
   }
 
-  CFDataRef certdata = CFDataCreate(kCFAllocatorDefault, data, len);
-  free(data);
-  if (!certdata)
-    return -1;
-
-  *cacert = SecCertificateCreateWithData(NULL, certdata);
-  CFRelease(certdata);
-  if (!*cacert)
-    return -1;
+  *out = data;
+  *outlen = len;
 
   return 0;
 }
@@ -1639,9 +1632,25 @@ static int read_cert(const char *file, SecCertificateRef *cacert)
 static int verify_cert(const char *cafile, struct SessionHandle *data,
                        SSLContextRef ctx)
 {
-  SecCertificateRef cacert;
-  if (read_cert(cafile, &cacert) < 0) {
+  unsigned char *certbuf;
+  size_t buflen;
+  if (read_cert(cafile, &certbuf, &buflen) < 0) {
     failf(data, "SSL: failed to read or invalid CA certificate");
+    return -1;
+  }
+
+  CFDataRef certdata = CFDataCreate(kCFAllocatorDefault, certbuf, buflen);
+  free(certbuf);
+  if (!certdata) {
+    failf(data, "SSL: failed to allocate array for CA certificate");
+    return -1;
+  }
+
+  SecCertificateRef cacert = SecCertificateCreateWithData(kCFAllocatorDefault,
+                                                          certdata);
+  CFRelease(certdata);
+  if (!cacert) {
+    failf(data, "SSL: failed to create SecCertificate from CA certificate");
     return -1;
   }
 
@@ -1652,7 +1661,7 @@ static int verify_cert(const char *cafile, struct SessionHandle *data,
     return -1;
   }
 
-  CFMutableArrayRef array = CFArrayCreateMutable(NULL, 0,
+  CFMutableArrayRef array = CFArrayCreateMutable(kCFAllocatorDefault, 0,
                                                  &kCFTypeArrayCallBacks);
   CFArrayAppendValue(array, cacert);
   CFRelease(cacert);
