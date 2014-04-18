@@ -1629,6 +1629,35 @@ static int read_cert(const char *file, unsigned char **out, size_t *outlen)
   return 0;
 }
 
+static int sslerr_to_curlerr(struct SessionHandle *data, int err)
+{
+  switch(err) {
+    case errSSLXCertChainInvalid:
+      failf(data, "SSL certificate problem: Invalid certificate chain");
+      return CURLE_SSL_CACERT;
+    case errSSLUnknownRootCert:
+      failf(data, "SSL certificate problem: Untrusted root certificate");
+      return CURLE_SSL_CACERT;
+    case errSSLNoRootCert:
+      failf(data, "SSL certificate problem: No root certificate");
+      return CURLE_SSL_CACERT;
+    case errSSLCertExpired:
+      failf(data, "SSL certificate problem: Certificate chain had an "
+            "expired certificate");
+      return CURLE_SSL_CACERT;
+    case errSSLBadCert:
+      failf(data, "SSL certificate problem: Couldn't understand the server "
+            "certificate format");
+      return CURLE_SSL_CONNECT_ERROR;
+    case errSSLHostNameMismatch:
+      failf(data, "SSL certificate peer hostname mismatch");
+      return CURLE_PEER_FAILED_VERIFICATION;
+    default:
+      failf(data, "SSL unexpected certificate error %d", err);
+      return CURLE_SSL_CACERT;
+  }
+}
+
 static int verify_cert(const char *cafile, struct SessionHandle *data,
                        SSLContextRef ctx)
 {
@@ -1636,14 +1665,14 @@ static int verify_cert(const char *cafile, struct SessionHandle *data,
   size_t buflen;
   if (read_cert(cafile, &certbuf, &buflen) < 0) {
     failf(data, "SSL: failed to read or invalid CA certificate");
-    return -1;
+    return CURLE_SSL_CACERT;
   }
 
   CFDataRef certdata = CFDataCreate(kCFAllocatorDefault, certbuf, buflen);
   free(certbuf);
   if (!certdata) {
     failf(data, "SSL: failed to allocate array for CA certificate");
-    return -1;
+    return CURLE_OUT_OF_MEMORY;
   }
 
   SecCertificateRef cacert = SecCertificateCreateWithData(kCFAllocatorDefault,
@@ -1651,14 +1680,16 @@ static int verify_cert(const char *cafile, struct SessionHandle *data,
   CFRelease(certdata);
   if (!cacert) {
     failf(data, "SSL: failed to create SecCertificate from CA certificate");
-    return -1;
+    return CURLE_SSL_CACERT;
   }
 
   SecTrustRef trust;
   OSStatus ret = SSLCopyPeerTrust(ctx, &trust);
-  if (ret != noErr || trust == NULL) {
+  if (trust == NULL) {
     failf(data, "SSL: error getting certificate chain");
-    return -1;
+    return CURLE_OUT_OF_MEMORY;
+  } else if (ret != noErr) {
+    return sslerr_to_curlerr(data, ret);
   }
 
   CFMutableArrayRef array = CFArrayCreateMutable(kCFAllocatorDefault, 0,
@@ -1668,19 +1699,16 @@ static int verify_cert(const char *cafile, struct SessionHandle *data,
 
   ret = SecTrustSetAnchorCertificates(trust, array);
   if (ret != noErr) {
-    failf(data, "SSL: error setting CA certificate as trusted");
     CFRelease(trust);
-    return -1;
+    return sslerr_to_curlerr(data, ret);
   }
 
   SecTrustResultType trust_eval = 0;
   ret = SecTrustEvaluate(trust, &trust_eval);
-  ret = SecTrustEvaluate(trust, &trust_eval);
   CFRelease(array);
   CFRelease(trust);
   if (ret != noErr) {
-    failf(data, "SSL: SecTrustEvaluate() failed");
-    return -1;
+    return sslerr_to_curlerr(data, ret);
   }
 
   switch (trust_eval) {
@@ -1688,14 +1716,14 @@ static int verify_cert(const char *cafile, struct SessionHandle *data,
     case kSecTrustResultProceed:
       infof(data, "SSL: certificate verification succeeded (result: %d)",
             trust_eval);
-      return 0;
+      return CURLE_OK;
 
     case kSecTrustResultRecoverableTrustFailure:
     case kSecTrustResultDeny:
     default:
       failf(data, "SSL: certificate verification failed (result: %d)",
             trust_eval);
-      return 1;
+      return CURLE_PEER_FAILED_VERIFICATION;
   }
 }
 
@@ -1725,10 +1753,12 @@ darwinssl_connect_step2(struct connectdata *conn, int sockindex)
       /* The below is errSSLServerAuthCompleted; it's not defined in
         Leopard's headers */
       case -9841:
-        if(data->set.str[STRING_SSL_CAFILE] &&
-           verify_cert(data->set.str[STRING_SSL_CAFILE], data,
-                       connssl->ssl_ctx) != 0)
-          return CURLE_SSL_CACERT;
+        if(data->set.str[STRING_SSL_CAFILE]) {
+          int res = verify_cert(data->set.str[STRING_SSL_CAFILE], data,
+                                connssl->ssl_ctx);
+          if (res != CURLE_OK)
+            return res;
+        }
         /* the documentation says we need to call SSLHandshake() again */
         return darwinssl_connect_step2(conn, sockindex);
 
