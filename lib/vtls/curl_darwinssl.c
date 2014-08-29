@@ -1740,7 +1740,7 @@ static int verify_cert(const char *cafile, struct SessionHandle *data,
     }
 
     CFArrayAppendValue(array, cacert);
-    CFRelease(cacert);
+    //CFRelease(cacert);
 
     if(offset == 0) {
       /* This was indeed a DER certificate. */
