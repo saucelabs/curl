@@ -1718,6 +1718,8 @@ static int verify_cert(const char *cafile, struct SessionHandle *data,
     infof(data, "SSL: parsing CA certificate file n=%d offset=%d/%d\n",
           n, offset, (int)buflen);
 
+    infof(data, "SSL: creating new certificate n=%d length=%d\n",
+          n, derlen);
     CFDataRef certdata = CFDataCreate(kCFAllocatorDefault, der, derlen);
     free(der);
     if(!certdata) {
