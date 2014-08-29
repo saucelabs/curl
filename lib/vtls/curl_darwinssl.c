@@ -1527,7 +1527,7 @@ static CURLcode darwinssl_connect_step1(struct connectdata *conn,
   return CURLE_OK;
 }
 
-static int pem_to_der(const char *in, unsigned char **out, size_t *outlen)
+static long pem_to_der(const char *in, unsigned char **out, size_t *outlen)
 {
   char *sep_start, *sep_end, *cert_start, *cert_end;
   size_t i, j, err;
@@ -1575,7 +1575,7 @@ static int pem_to_der(const char *in, unsigned char **out, size_t *outlen)
   }
 
   sep_end = strstr(cert_end + 1, "-----");
-  if (sep_end == NULL) {
+  if(sep_end == NULL) {
     free(*out);
     return -1;
   }
@@ -1664,9 +1664,10 @@ static int sslerr_to_curlerr(struct SessionHandle *data, int err)
 static int verify_cert(const char *cafile, struct SessionHandle *data,
                        SSLContextRef ctx)
 {
-  int offset = 0, n = 0, res;
+  int n = 0;
+  long res;
   unsigned char *certbuf, *der;
-  size_t buflen, derlen;
+  size_t buflen, derlen, offset = 0;
 
   if(read_cert(cafile, &certbuf, &buflen) < 0) {
     failf(data, "SSL: failed to read or invalid CA certificate");
@@ -1696,16 +1697,18 @@ static int verify_cert(const char *cafile, struct SessionHandle *data,
      * this fails, we assume the certificate is in DER format.
      */
     res = pem_to_der((const char *)certbuf + offset, &der, &derlen);
-    if (res < 0) {
+    if(res < 0) {
       free(certbuf);
       failf(data, "SSL: invalid CA certificate #%d (offset %d) in bundle",
             n, offset);
       return CURLE_SSL_CACERT;
-    } else if (res == 0 && offset == 0) {
+    }
+    else if(res == 0 && offset == 0) {
       /* This is not a PEM file, probably a certificate in DER format. */
       der = certbuf;
       derlen = buflen;
-    } else if (res == 0) {
+    }
+    else if(res == 0) {
       /* No more certificates in the bundle. */
       break;
     }
