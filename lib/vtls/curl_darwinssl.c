@@ -1763,6 +1763,8 @@ static int verify_cert(const char *cafile, struct SessionHandle *data,
     return sslerr_to_curlerr(data, ret);
   }
 
+  infof(data, "SSL: %d certs in array\n", CFArrayGetCount(array));
+
   ret = SecTrustSetAnchorCertificates(trust, array);
   if(ret != noErr) {
     CFRelease(trust);
@@ -1780,7 +1782,7 @@ static int verify_cert(const char *cafile, struct SessionHandle *data,
   switch (trust_eval) {
     case kSecTrustResultUnspecified:
     case kSecTrustResultProceed:
-      infof(data, "SSL: certificate verification succeeded (result: %d)",
+      infof(data, "SSL: certificate verification succeeded (result: %d)\n",
             trust_eval);
       return CURLE_OK;
 
