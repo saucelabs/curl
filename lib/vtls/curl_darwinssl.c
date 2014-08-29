@@ -1549,16 +1549,15 @@ static long pem_to_der(const char *in, unsigned char **out, size_t *outlen)
   if(cert_end == NULL)
     return -1;
 
-  len = cert_end - cert_start;
-  *out = malloc(len);
-  if(!*out)
+  sep_end = strstr(cert_end + 1, "-----");
+  if(sep_end == NULL)
     return -1;
+  sep_end += 5;
 
+  len = cert_end - cert_start;
   b64 = malloc(len + 1);
-  if(!b64) {
-    free(*out);
+  if(!b64)
     return -1;
-  }
 
   /* Create base64 string without linefeeds. */
   for(i = 0, j = 0; i < len; i++) {
@@ -1573,13 +1572,6 @@ static long pem_to_der(const char *in, unsigned char **out, size_t *outlen)
     free(*out);
     return -1;
   }
-
-  sep_end = strstr(cert_end + 1, "-----");
-  if(sep_end == NULL) {
-    free(*out);
-    return -1;
-  }
-  sep_end += 5;
 
   return sep_end - in;
 }
