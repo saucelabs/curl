@@ -1657,9 +1657,6 @@ static int append_cert_to_array(struct SessionHandle *data,
                                 unsigned char *buf, size_t buflen,
                                 CFMutableArrayRef array)
 {
-    infof(data, "SSL: creating new certificate from buffer length=%d\n",
-          buflen);
-
     CFDataRef certdata = CFDataCreate(kCFAllocatorDefault, buf, buflen);
     if(!certdata) {
       failf(data, "SSL: failed to allocate array for CA certificate");
@@ -1712,8 +1709,6 @@ static int verify_cert(const char *cafile, struct SessionHandle *data,
 
   while(offset < buflen) {
     n++;
-    infof(data, "SSL: parsing CA certificate file n=%d offset=%d/%d\n",
-          n, offset, (int)buflen);
 
     /*
      * Check if the certificate is in PEM format, and convert it to DER. If
