@@ -1760,6 +1760,11 @@ static int verify_cert(const char *cafile, struct SessionHandle *data,
     CFRelease(trust);
     return sslerr_to_curlerr(data, ret);
   }
+  ret = SecTrustSetAnchorCertificatesOnly(trust, true);
+  if(ret != noErr) {
+    CFRelease(trust);
+    return sslerr_to_curlerr(data, ret);
+  }
 
   SecTrustResultType trust_eval = 0;
   ret = SecTrustEvaluate(trust, &trust_eval);
