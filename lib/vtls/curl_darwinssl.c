@@ -1653,6 +1653,33 @@ static int sslerr_to_curlerr(struct SessionHandle *data, int err)
   }
 }
 
+static int append_cert_to_array(struct SessionHandle *data,
+                                unsigned char *buf, size_t buflen,
+                                CFMutableArrayRef array)
+{
+    infof(data, "SSL: creating new certificate from buffer length=%d\n",
+          derlen);
+
+    CFDataRef certdata = CFDataCreate(kCFAllocatorDefault, buf, buflen);
+    if(!certdata) {
+      failf(data, "SSL: failed to allocate array for CA certificate");
+      return CURLE_OUT_OF_MEMORY;
+    }
+
+    SecCertificateRef cacert =
+      SecCertificateCreateWithData(kCFAllocatorDefault, certdata);
+    CFRelease(certdata);
+    if(!cacert) {
+      failf(data, "SSL: failed to create SecCertificate from CA certificate");
+      return CURLE_SSL_CACERT;
+    }
+
+    CFArrayAppendValue(array, cacert);
+    CFRelease(cacert);
+
+    return CURLE_OK;
+}
+
 static int verify_cert(const char *cafile, struct SessionHandle *data,
                        SSLContextRef ctx)
 {
@@ -1684,6 +1711,10 @@ static int verify_cert(const char *cafile, struct SessionHandle *data,
   }
 
   while(offset < buflen) {
+    n++;
+    infof(data, "SSL: parsing CA certificate file n=%d offset=%d/%d\n",
+          n, offset, (int)buflen);
+
     /*
      * Check if the certificate is in PEM format, and convert it to DER. If
      * this fails, we assume the certificate is in DER format.
@@ -1695,55 +1726,27 @@ static int verify_cert(const char *cafile, struct SessionHandle *data,
             n, offset);
       return CURLE_SSL_CACERT;
     }
-    else if(res == 0 && offset == 0) {
+    offset += res;
+
+    if(res == 0 && offset == 0) {
       /* This is not a PEM file, probably a certificate in DER format. */
-      der = certbuf;
-      derlen = buflen;
+      ret = append_cert_to_array(data, certbuf, buflen, array);
+      free(certbuf);
+      if(ret != CURLE_OK)
+        return ret;
+      break;
     }
     else if(res == 0) {
       /* No more certificates in the bundle. */
+      free(certbuf);
       break;
     }
 
-    n++;
-    offset += res;
-    infof(data, "SSL: parsing CA certificate file n=%d offset=%d/%d\n",
-          n, offset, (int)buflen);
-
-    infof(data, "SSL: creating new certificate n=%d length=%d\n",
-          n, derlen);
-    CFDataRef certdata = CFDataCreate(kCFAllocatorDefault, der, derlen);
+    ret = append_cert_to_array(data, der, derlen, array);
     free(der);
-    if(!certdata) {
-      free(certbuf);
-      CFRelease(array);
-      failf(data, "SSL: failed to allocate array for CA certificate");
-      return CURLE_OUT_OF_MEMORY;
-    }
-
-    SecCertificateRef cacert =
-      SecCertificateCreateWithData(kCFAllocatorDefault, certdata);
-    CFRelease(certdata);
-    if(!cacert) {
-      free(certbuf);
-      CFRelease(array);
-      failf(data, "SSL: failed to create SecCertificate from CA certificate");
-      return CURLE_SSL_CACERT;
-    }
-
-    CFArrayAppendValue(array, cacert);
-    //CFRelease(cacert);
-
-    if(offset == 0) {
-      /* This was indeed a DER certificate. */
-      assert(der == certbuf);
-      certbuf = NULL;
-      break;
-    }
+    if(ret != CURLE_OK)
+      return ret;
   }
-
-  if(certbuf != NULL)
-    free(certbuf);
 
   SecTrustRef trust;
   OSStatus ret = SSLCopyPeerTrust(ctx, &trust);
