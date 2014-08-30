@@ -1658,7 +1658,7 @@ static int append_cert_to_array(struct SessionHandle *data,
                                 CFMutableArrayRef array)
 {
     infof(data, "SSL: creating new certificate from buffer length=%d\n",
-          derlen);
+          buflen);
 
     CFDataRef certdata = CFDataCreate(kCFAllocatorDefault, buf, buflen);
     if(!certdata) {
@@ -1683,7 +1683,7 @@ static int append_cert_to_array(struct SessionHandle *data,
 static int verify_cert(const char *cafile, struct SessionHandle *data,
                        SSLContextRef ctx)
 {
-  int n = 0;
+  int n = 0, ret;
   long res;
   unsigned char *certbuf, *der;
   size_t buflen, derlen, offset = 0;
