@@ -1683,7 +1683,7 @@ static int append_cert_to_array(struct SessionHandle *data,
 static int verify_cert(const char *cafile, struct SessionHandle *data,
                        SSLContextRef ctx)
 {
-  int n = 0, ret;
+  int n = 0, rc;
   long res;
   unsigned char *certbuf, *der;
   size_t buflen, derlen, offset = 0;
@@ -1730,10 +1730,10 @@ static int verify_cert(const char *cafile, struct SessionHandle *data,
 
     if(res == 0 && offset == 0) {
       /* This is not a PEM file, probably a certificate in DER format. */
-      ret = append_cert_to_array(data, certbuf, buflen, array);
+      rc = append_cert_to_array(data, certbuf, buflen, array);
       free(certbuf);
-      if(ret != CURLE_OK)
-        return ret;
+      if(rc != CURLE_OK)
+        return rc;
       break;
     }
     else if(res == 0) {
@@ -1742,10 +1742,10 @@ static int verify_cert(const char *cafile, struct SessionHandle *data,
       break;
     }
 
-    ret = append_cert_to_array(data, der, derlen, array);
+    rc = append_cert_to_array(data, der, derlen, array);
     free(der);
-    if(ret != CURLE_OK)
-      return ret;
+    if(rc != CURLE_OK)
+      return rc;
   }
 
   SecTrustRef trust;
