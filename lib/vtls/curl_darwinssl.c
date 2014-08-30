@@ -1717,6 +1717,7 @@ static int verify_cert(const char *cafile, struct SessionHandle *data,
     res = pem_to_der((const char *)certbuf + offset, &der, &derlen);
     if(res < 0) {
       free(certbuf);
+      CFRelease(array);
       failf(data, "SSL: invalid CA certificate #%d (offset %d) in bundle",
             n, offset);
       return CURLE_SSL_CACERT;
@@ -1727,8 +1728,10 @@ static int verify_cert(const char *cafile, struct SessionHandle *data,
       /* This is not a PEM file, probably a certificate in DER format. */
       rc = append_cert_to_array(data, certbuf, buflen, array);
       free(certbuf);
-      if(rc != CURLE_OK)
+      if(rc != CURLE_OK) {
+        CFRelease(array);
         return rc;
+      }
       break;
     }
     else if(res == 0) {
@@ -1739,17 +1742,22 @@ static int verify_cert(const char *cafile, struct SessionHandle *data,
 
     rc = append_cert_to_array(data, der, derlen, array);
     free(der);
-    if(rc != CURLE_OK)
+    if(rc != CURLE_OK) {
+      free(certbuf);
+      CFRelease(array);
       return rc;
+    }
   }
 
   SecTrustRef trust;
   OSStatus ret = SSLCopyPeerTrust(ctx, &trust);
   if(trust == NULL) {
     failf(data, "SSL: error getting certificate chain");
+    CFRelease(array);
     return CURLE_OUT_OF_MEMORY;
   }
   else if(ret != noErr) {
+    CFRelease(array);
     return sslerr_to_curlerr(data, ret);
   }
 
