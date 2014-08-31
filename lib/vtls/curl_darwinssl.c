@@ -1676,7 +1676,7 @@ static int append_cert_to_array(struct SessionHandle *data,
     OSStatus ret = SecCertificateCopyPublicKey(cacert, &key);
     if(ret != noErr) {
       CFRelease(cacert);
-      failf(data, "SSL: invalid CA certificate");
+      failf(data, "SSL: invalid CA certificate XX");
       return CURLE_SSL_CACERT;
     }
     CFRelease(key);
