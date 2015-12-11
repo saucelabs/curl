@@ -645,11 +645,10 @@ CURLcode Curl_set_dns_local_ip4(struct SessionHandle *data,
                                 const char *local_ip4)
 {
 #if (ARES_VERSION >= 0x010704)
-  struct in_addr a4;
+  unsigned int a4;
 
   if((!local_ip4) || (local_ip4[0] == 0)) {
-    /* disabled: do not bind to a specific address */
-    memset(&a4, 0, sizeof(a4));
+    a4 = 0; /* disabled: do not bind to a specific address */
   }
   else {
     if(Curl_inet_pton(AF_INET, local_ip4, &a4) != 1) {
