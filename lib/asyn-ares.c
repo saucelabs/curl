@@ -648,7 +648,8 @@ CURLcode Curl_set_dns_local_ip4(struct SessionHandle *data,
   struct in_addr a4;
 
   if((!local_ip4) || (local_ip4[0] == 0)) {
-    a4 = 0; /* disabled: do not bind to a specific address */
+    /* disabled: do not bind to a specific address */
+    memset(&a4, 0, sizeof(a4));
   }
   else {
     if(Curl_inet_pton(AF_INET, local_ip4, &a4) != 1) {
