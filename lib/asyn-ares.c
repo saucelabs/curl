@@ -645,7 +645,7 @@ CURLcode Curl_set_dns_local_ip4(struct SessionHandle *data,
                                 const char *local_ip4)
 {
 #if (ARES_VERSION >= 0x010704)
-  uint32_t a4;
+  struct in_addr a4;
 
   if((!local_ip4) || (local_ip4[0] == 0)) {
     a4 = 0; /* disabled: do not bind to a specific address */
