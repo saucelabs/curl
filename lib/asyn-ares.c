@@ -643,7 +643,6 @@ CURLcode Curl_set_dns_local_ip4(struct Curl_easy *data,
 {
 #if (ARES_VERSION >= 0x010704)
   struct in_addr a4;
-  // unsigned int a4;
 
   if((!local_ip4) || (local_ip4[0] == 0)) {
     a4.s_addr = 0; /* disabled: do not bind to a specific address */
